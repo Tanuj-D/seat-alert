@@ -1,5 +1,6 @@
 """Fetch and parse section data from UNC's public class search (reports.unc.edu)."""
 
+import json
 from dataclasses import dataclass
 
 import httpx
@@ -57,6 +58,23 @@ def parse_sections(html: str) -> list[Section]:
             available_seats=int(seats) if seats.lstrip("-").isdigit() else 0,
         ))
     return sections
+
+
+def parse_terms(html: str) -> list[str]:
+    """Terms currently offered, e.g. ["2026 Fall", "2027 Spring"]."""
+    soup = BeautifulSoup(html, "html.parser")
+    tag = soup.find("script", id="json_terms")
+    if tag is None or not tag.string:
+        return []
+    terms = json.loads(tag.string)
+    return [t for t in terms if isinstance(t, str)]
+
+
+def fetch_terms() -> list[str]:
+    with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=15) as client:
+        resp = client.get(SEARCH_URL, follow_redirects=True)
+        resp.raise_for_status()
+        return parse_terms(resp.text)
 
 
 def fetch_sections(term: str, subject: str, catalog_number: str,

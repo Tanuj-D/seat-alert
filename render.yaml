@@ -1,0 +1,36 @@
+# Render Blueprint: creates the web service and a Postgres database in one step.
+# In Render: New > Blueprint > pick this repo. Review the plans and prices it
+# shows before you click Apply.
+#
+# The seat checker runs inside the web service (EMBEDDED_CHECKER), so only one
+# service is needed. Use a plan that doesn't sleep when idle; on a sleeping
+# free instance the checker would stop between visits.
+
+services:
+  - type: web
+    name: seat-alert
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: seat-alert-db
+          property: connectionString
+      - key: EMBEDDED_CHECKER
+        value: "true"
+      # Set these in the Render dashboard (you'll be prompted on first deploy).
+      - key: BASE_URL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+
+databases:
+  - name: seat-alert-db
+    databaseName: seat_alert

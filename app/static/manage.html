@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Your classes · UNC Seat Alert</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="page">
+  <header>
+    <h1>Your watched classes</h1>
+    <p>We'll email you when any of these sections opens up.</p>
+  </header>
+
+  <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+
+  <section class="card">
+    <ul id="watches" class="sections"><li class="muted">Loading…</li></ul>
+  </section>
+
+  <a class="btn secondary" href="/">Watch another class</a>
+
+  <footer>A student project, not affiliated with UNC-Chapel Hill.</footer>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const token = new URLSearchParams(location.search).get("token") || "";
+
+function notify(text, ok = true) {
+  const n = $("notice");
+  n.textContent = text;
+  n.className = "notice " + (ok ? "ok" : "err");
+}
+
+function empty(text) {
+  const li = document.createElement("li");
+  li.className = "muted";
+  li.textContent = text;
+  $("watches").replaceChildren(li);
+}
+
+async function load() {
+  if (!token) return empty("This page needs the link from one of our emails.");
+  const resp = await fetch("/api/watches?token=" + encodeURIComponent(token));
+  if (!resp.ok) return empty("This link is invalid or expired. Use the link from your latest email.");
+  render(await resp.json());
+}
+
+function render(watches) {
+  if (!watches.length) return empty("You're not watching any classes right now.");
+  const list = $("watches");
+  list.replaceChildren();
+  for (const w of watches) {
+    const li = document.createElement("li");
+    li.className = "section";
+
+    const info = document.createElement("div");
+    info.className = "info";
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = `${w.subject} ${w.catalog_number}-${w.section}`;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = w.term;
+    info.append(name, meta);
+
+    const badge = document.createElement("span");
+    const open = (w.last_seats ?? 0) > 0;
+    badge.className = "badge " + (open ? "open" : "full");
+    badge.textContent = w.last_seats == null ? "Checking…" : open ? `${w.last_seats} open` : "Full";
+
+    const btn = document.createElement("button");
+    btn.className = "btn small secondary";
+    btn.textContent = "Remove";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const resp = await fetch(`/api/watches/${w.id}?token=${encodeURIComponent(token)}`,
+                               { method: "DELETE" });
+      if (resp.ok) {
+        li.remove();
+        notify(`Stopped watching ${name.textContent}.`);
+        if (!list.children.length) empty("You're not watching any classes right now.");
+      } else {
+        btn.disabled = false;
+        notify("Couldn't remove that class. Try again.", false);
+      }
+    });
+
+    li.append(info, badge, btn);
+    list.append(li);
+  }
+}
+
+load();
+</script>
+</body>
+</html>

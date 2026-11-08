@@ -67,13 +67,15 @@ def verification_email(to: str, token: str) -> Email:
         body=(
             "Click the link below to confirm your email and start getting seat alerts:\n\n"
             f"{link}\n\n"
+            "Keep this email: you can see and manage your watched classes any time here:\n"
+            f"{config.BASE_URL}/manage?token={token}\n\n"
             "If you didn't sign up, ignore this email and you won't hear from us again."
         ),
     )
 
 
 def seat_alert_email(to: str, course: str, title: str, schedule: str,
-                     seats: int, unsubscribe_link: str) -> Email:
+                     seats: int, unsubscribe_link: str, manage_link: str) -> Email:
     plural = "seat is" if seats == 1 else "seats are"
     return Email(
         to=to,
@@ -82,6 +84,7 @@ def seat_alert_email(to: str, course: str, title: str, schedule: str,
             f"Good news! {seats} {plural} open in {course} ({title}, {schedule}).\n\n"
             "Seats go fast, so register now in ConnectCarolina:\n"
             "https://connectcarolina.unc.edu\n\n"
-            f"Stop watching this section: {unsubscribe_link}"
+            f"Stop watching this section: {unsubscribe_link}\n"
+            f"Manage all your watched classes: {manage_link}"
         ),
     )

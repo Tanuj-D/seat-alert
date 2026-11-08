@@ -1,23 +1,43 @@
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from html import escape
+from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import config, mailer, scraper
+from app.cache import TTLCache
+from app.checker import run_check_once
 from app.db import Subscriber, Watch, as_utc, get_session, init_db, utcnow
 from app.ratelimit import RateLimiter
 
 log = logging.getLogger(__name__)
+STATIC_DIR = Path(__file__).parent / "static"
 
 create_watch_limiter = RateLimiter(config.CREATE_WATCH_LIMIT_PER_MINUTE, 60)
+search_limiter = RateLimiter(config.SEARCH_LIMIT_PER_MINUTE, 60)
+sections_cache = TTLCache(ttl_seconds=60)
+terms_cache = TTLCache(ttl_seconds=3600)
+
+
+async def checker_loop() -> None:
+    """Runs the seat checker inside the web process (when EMBEDDED_CHECKER is on)."""
+    while True:
+        try:
+            sent = await asyncio.to_thread(run_check_once)
+            log.info("Check complete, %d alerts sent", sent)
+        except Exception:
+            log.exception("Seat check failed")
+        await asyncio.sleep(config.CHECK_INTERVAL_SECONDS)
 
 
 @asynccontextmanager
@@ -26,10 +46,16 @@ async def lifespan(_: FastAPI):
     # emails printed in local mode) are silently dropped.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     init_db()
+    task = asyncio.create_task(checker_loop()) if config.EMBEDDED_CHECKER else None
     yield
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="UNC Seat Alert", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 # --- Schemas -----------------------------------------------------------------
@@ -81,6 +107,15 @@ class CreateWatchOut(BaseModel):
 
 # --- Helpers -----------------------------------------------------------------
 
+def lookup_sections(term: str, subject: str, catalog_number: str) -> list[scraper.Section]:
+    """Fetch sections from UNC, cached briefly. Raises 502 if UNC is unreachable."""
+    key = (term.strip(), subject.strip().upper(), catalog_number.strip())
+    try:
+        return sections_cache.get_or_set(key, lambda: scraper.fetch_sections(*key))
+    except httpx.HTTPError:
+        raise HTTPException(502, "UNC class search is unavailable right now")
+
+
 def subscriber_by_token(session: Session, token: str) -> Subscriber:
     sub = session.scalar(select(Subscriber).where(Subscriber.token == token))
     if sub is None:
@@ -102,26 +137,54 @@ def maybe_send_verification(session: Session, sub: Subscriber) -> None:
     session.commit()
 
 
-def html_page(title: str, message: str, status: int = 200) -> HTMLResponse:
-    body = (f"<!doctype html><meta charset=utf-8><title>{escape(title)}</title>"
-            "<body style='font-family:system-ui;max-width:32rem;margin:4rem auto;padding:0 1rem'>"
-            f"<h1>{escape(title)}</h1><p>{escape(message)}</p></body>")
+def html_page(title: str, message: str, status: int = 200,
+              link: tuple[str, str] | None = None) -> HTMLResponse:
+    href, label = link or ("/", "Back to UNC Seat Alert")
+    body = (
+        "<!doctype html><html lang=en><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{escape(title)} · UNC Seat Alert</title>"
+        "<link rel=stylesheet href='/static/app.css'>"
+        "<main class='page narrow'><div class=card>"
+        f"<h1>{escape(title)}</h1><p>{escape(message)}</p>"
+        f"<a class='btn' href='{escape(href)}'>{escape(label)}</a>"
+        "</div></main></html>"
+    )
     return HTMLResponse(body, status_code=status)
 
 
-# --- Routes ------------------------------------------------------------------
+# --- Pages -------------------------------------------------------------------
+
+@app.get("/", include_in_schema=False)
+def index_page():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/manage", include_in_schema=False)
+def manage_page():
+    return FileResponse(STATIC_DIR / "manage.html")
+
+
+# --- API ---------------------------------------------------------------------
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-@app.get("/api/sections", response_model=list[SectionOut])
-def get_sections(term: str, subject: str, catalog_number: str):
+@app.get("/api/terms", response_model=list[str],
+         dependencies=[Depends(search_limiter.dependency)])
+def get_terms():
     try:
-        sections = scraper.fetch_sections(term, subject, catalog_number)
+        return terms_cache.get_or_set("terms", scraper.fetch_terms)
     except httpx.HTTPError:
         raise HTTPException(502, "UNC class search is unavailable right now")
+
+
+@app.get("/api/sections", response_model=list[SectionOut],
+         dependencies=[Depends(search_limiter.dependency)])
+def get_sections(term: str, subject: str, catalog_number: str):
+    sections = lookup_sections(term, subject, catalog_number)
     return [SectionOut(**s.__dict__) for s in sections]
 
 
@@ -129,10 +192,7 @@ def get_sections(term: str, subject: str, catalog_number: str):
           dependencies=[Depends(create_watch_limiter.dependency)])
 def create_watch(body: WatchIn, session: Session = Depends(get_session)):
     # Make sure the section exists before watching it.
-    try:
-        sections = scraper.fetch_sections(body.term, body.subject, body.catalog_number)
-    except httpx.HTTPError:
-        raise HTTPException(502, "UNC class search is unavailable right now")
+    sections = lookup_sections(body.term, body.subject, body.catalog_number)
     match = next((s for s in sections if s.section == body.section), None)
     if match is None:
         raise HTTPException(
@@ -179,7 +239,8 @@ def verify_email(token: str, session: Session = Depends(get_session)):
         sub.verified_at = utcnow()
         session.commit()
     return html_page("Email confirmed",
-                     "You're all set. We'll email you as soon as a seat opens.")
+                     "You're all set. We'll email you as soon as a seat opens.",
+                     link=(f"/manage?token={sub.token}", "See your watched classes"))
 
 
 @app.get("/api/watches", response_model=list[WatchOut])
@@ -208,4 +269,5 @@ def unsubscribe(watch_id: int, token: str, session: Session = Depends(get_sessio
     course = watch.course
     session.delete(watch)
     session.commit()
-    return html_page("Unsubscribed", f"You'll no longer get alerts for {course}.")
+    return html_page("Unsubscribed", f"You'll no longer get alerts for {course}.",
+                     link=(f"/manage?token={sub.token}", "See your other watched classes"))

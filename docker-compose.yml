@@ -1,0 +1,54 @@
+# Runs the whole app locally the way it runs in production:
+#   docker compose up --build
+# Then open http://localhost:8000. Emails print in the web/checker logs unless
+# SMTP settings are in .env.
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: seat_alert
+      POSTGRES_PASSWORD: seat_alert
+      POSTGRES_DB: seat_alert
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seat_alert"]
+      interval: 2s
+      retries: 15
+
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://seat_alert:seat_alert@db:5432/seat_alert
+      BASE_URL: http://localhost:8000
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 3s
+      retries: 20
+
+  checker:
+    build: .
+    command: python -m app.run_checker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://seat_alert:seat_alert@db:5432/seat_alert
+      BASE_URL: http://localhost:8000
+    # The web service runs migrations at startup, so wait for it.
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

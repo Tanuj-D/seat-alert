@@ -1,9 +1,10 @@
 import secrets
 from collections.abc import Iterator
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import (DateTime, ForeignKey, Integer, String, UniqueConstraint,
-                        create_engine)
+                        create_engine, inspect)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
 
@@ -85,8 +86,22 @@ class Watch(Base):
         return f"{self.subject} {self.catalog_number}-{self.section}"
 
 
+ROOT = Path(__file__).resolve().parent.parent
+FIRST_REVISION = "39924fd428ff"
+
+
 def init_db() -> None:
-    Base.metadata.create_all(engine)
+    """Bring the database schema up to date by running Alembic migrations."""
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(ROOT / "alembic.ini"))
+    tables = set(inspect(engine).get_table_names())
+    if "subscribers" in tables and "alembic_version" not in tables:
+        # Database was created before migrations existed. Mark it as being at
+        # the first migration so only newer ones get applied.
+        command.stamp(cfg, FIRST_REVISION)
+    command.upgrade(cfg, "head")
 
 
 def get_session() -> Iterator[Session]:

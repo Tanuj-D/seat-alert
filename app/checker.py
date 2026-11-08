@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app import config, mailer
-from app.db import Subscriber, Watch, utcnow
+from app.db import SessionLocal, Subscriber, Watch, utcnow
 from app.scraper import Section, fetch_sections
 
 log = logging.getLogger(__name__)
@@ -20,11 +20,11 @@ Notifier = Callable[[Watch, Section], None]
 
 def email_notifier(watch: Watch, section: Section) -> None:
     sub = watch.subscriber
-    link = f"{config.BASE_URL}/api/unsubscribe/{watch.id}?token={sub.token}"
     mailer.mailer.send(mailer.seat_alert_email(
         to=sub.email, course=watch.course, title=section.title,
         schedule=section.schedule, seats=section.available_seats,
-        unsubscribe_link=link))
+        unsubscribe_link=f"{config.BASE_URL}/api/unsubscribe/{watch.id}?token={sub.token}",
+        manage_link=f"{config.BASE_URL}/manage?token={sub.token}"))
 
 
 def check_watches(session: Session, fetch: Fetcher = fetch_sections,
@@ -71,3 +71,9 @@ def check_watches(session: Session, fetch: Fetcher = fetch_sections,
             w.last_seats = sec.available_seats
     session.commit()
     return sent
+
+
+def run_check_once() -> int:
+    """One full check with its own database session (used by both runners)."""
+    with SessionLocal() as session:
+        return check_watches(session, delay=config.CHECK_REQUEST_DELAY_SECONDS)

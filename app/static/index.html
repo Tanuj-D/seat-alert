@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UNC Seat Alert</title>
+  <meta name="description" content="Get an email the moment a seat opens in a full UNC class.">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="page">
+  <header>
+    <h1>UNC Seat Alert</h1>
+    <p>Class full? Get an email the moment a seat opens.</p>
+  </header>
+
+  <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+
+  <form id="search" class="card">
+    <h2>1. Find your class</h2>
+    <div class="row">
+      <div>
+        <label for="term">Term</label>
+        <select id="term" required><option>Loading…</option></select>
+      </div>
+      <div>
+        <label for="subject">Subject</label>
+        <input id="subject" placeholder="COMP" required maxlength="8" autocapitalize="characters">
+      </div>
+      <div>
+        <label for="number">Number</label>
+        <input id="number" placeholder="211" required maxlength="8">
+      </div>
+      <button class="btn" type="submit">Search</button>
+    </div>
+  </form>
+
+  <section id="results" class="card hidden">
+    <h2 id="results-title">2. Pick a section</h2>
+    <div style="margin-bottom:12px">
+      <label for="email">Your email</label>
+      <input id="email" type="email" placeholder="onyen@unc.edu" autocomplete="email">
+    </div>
+    <ul id="sections" class="sections"></ul>
+  </section>
+
+  <section class="card">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li>Search for a class and click <strong>Watch</strong> on a full section.</li>
+      <li>Confirm your email with the link we send you.</li>
+      <li>We check every couple of minutes and email you as soon as a seat opens.</li>
+    </ol>
+  </section>
+
+  <footer>
+    A student project, not affiliated with UNC-Chapel Hill. Seat data comes from the public
+    <a href="https://reports.unc.edu/class-search/" target="_blank" rel="noopener">UNC class search</a>.
+    · <a href="https://github.com/Tanuj-D/seat-alert" target="_blank" rel="noopener">Source</a>
+  </footer>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let lastSearch = null;
+
+function notify(text, ok = true) {
+  const n = $("notice");
+  n.textContent = text;
+  n.className = "notice " + (ok ? "ok" : "err");
+  clearTimeout(notify.timer);
+  notify.timer = setTimeout(() => n.classList.add("hidden"), ok ? 8000 : 6000);
+}
+
+async function api(path, options) {
+  const resp = await fetch(path, options);
+  const data = resp.status === 204 ? null : await resp.json().catch(() => null);
+  if (!resp.ok) {
+    let msg = data && data.detail;
+    if (Array.isArray(msg)) msg = "Please check your email address.";
+    throw new Error(msg || "Something went wrong. Try again in a minute.");
+  }
+  return data;
+}
+
+async function loadTerms() {
+  const select = $("term");
+  try {
+    const terms = await api("/api/terms");
+    select.replaceChildren(...terms.map((t) => new Option(t, t)));
+    // Default to the latest term, which is usually the one being registered for.
+    if (terms.length) select.value = terms[terms.length - 1];
+  } catch (e) {
+    select.replaceChildren(new Option("Couldn't load terms", ""));
+    notify(e.message, false);
+  }
+}
+
+function renderSections(sections) {
+  const list = $("sections");
+  list.replaceChildren();
+  if (!sections.length) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "No sections found. Check the subject and number.";
+    list.append(li);
+    return;
+  }
+  const first = sections[0];
+  $("results-title").textContent =
+    `2. Pick a section of ${first.subject} ${first.catalog_number}: ${first.title}`;
+
+  for (const s of sections) {
+    const li = document.createElement("li");
+    li.className = "section";
+
+    const info = document.createElement("div");
+    info.className = "info";
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = `Section ${s.section}`;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = [s.schedule, s.instruction_mode].filter(Boolean).join(" · ");
+    info.append(name, meta);
+
+    const badge = document.createElement("span");
+    const open = s.available_seats > 0;
+    badge.className = "badge " + (open ? "open" : "full");
+    badge.textContent = open ? `${s.available_seats} open` : "Full";
+
+    const btn = document.createElement("button");
+    btn.className = "btn small" + (open ? " secondary" : "");
+    btn.textContent = "Watch";
+    btn.title = open ? "This section has seats now. We'll alert you if it fills and reopens."
+                     : "Get an email when a seat opens";
+    btn.addEventListener("click", () => watch(s, btn));
+
+    li.append(info, badge, btn);
+    list.append(li);
+  }
+}
+
+async function watch(section, btn) {
+  const email = $("email").value.trim();
+  if (!email || !$("email").checkValidity()) {
+    $("email").focus();
+    notify("Enter your email first so we know where to send the alert.", false);
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const res = await api("/api/watches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        term: section.term,
+        subject: section.subject,
+        catalog_number: section.catalog_number,
+        section: section.section,
+      }),
+    });
+    btn.textContent = "Watching ✓";
+    notify(`Watching ${section.subject} ${section.catalog_number}-${section.section}. ${res.message}`);
+  } catch (e) {
+    btn.disabled = false;
+    notify(e.message, false);
+  }
+}
+
+$("search").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const params = new URLSearchParams({
+    term: $("term").value,
+    subject: $("subject").value.trim().toUpperCase(),
+    catalog_number: $("number").value.trim(),
+  });
+  if (params.toString() === lastSearch) return;
+  const btn = event.submitter;
+  btn.disabled = true;
+  $("notice").className = "notice hidden";
+  try {
+    const sections = await api("/api/sections?" + params);
+    lastSearch = params.toString();
+    $("results").classList.remove("hidden");
+    renderSections(sections);
+  } catch (e) {
+    notify(e.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+loadTerms();
+</script>
+</body>
+</html>
