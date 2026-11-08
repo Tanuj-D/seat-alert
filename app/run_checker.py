@@ -1,21 +1,25 @@
-"""Run the seat checker on a loop: python -m app.run_checker"""
+"""Run the seat checker as its own process: python -m app.run_checker
+
+The web server runs database migrations at startup, so start it first.
+"""
 
 import logging
 import time
 
 from app import config
-from app.checker import check_watches
-from app.db import SessionLocal, init_db
+from app.checker import run_check_once
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    init_db()
     while True:
         started = time.monotonic()
-        with SessionLocal() as session:
-            sent = check_watches(session, delay=config.CHECK_REQUEST_DELAY_SECONDS)
-        logging.info("Check complete in %.1fs, %d alerts sent", time.monotonic() - started, sent)
+        try:
+            sent = run_check_once()
+            logging.info("Check complete in %.1fs, %d alerts sent",
+                         time.monotonic() - started, sent)
+        except Exception:
+            logging.exception("Seat check failed")
         time.sleep(config.CHECK_INTERVAL_SECONDS)
 
 

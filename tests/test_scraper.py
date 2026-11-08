@@ -17,3 +17,9 @@ def test_parses_real_results_page(comp211_html):
 
 def test_page_without_results_table():
     assert parse_sections("<html><body>No classes found</body></html>") == []
+
+
+def test_parses_term_list(comp211_html):
+    from app.scraper import parse_terms
+    assert parse_terms(comp211_html) == ["2026 Fall", "2027 Spring"]
+    assert parse_terms("<html></html>") == []

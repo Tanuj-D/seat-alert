@@ -5,13 +5,15 @@ from pathlib import Path
 import pytest
 
 # Point the app at a throwaway database before any app module is imported.
-_tmp = tempfile.mkdtemp()
-os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
+# CI sets TEST_DATABASE_URL to also run the suite against real Postgres.
+os.environ["DATABASE_URL"] = os.getenv(
+    "TEST_DATABASE_URL", f"sqlite:///{tempfile.mkdtemp()}/test.db")
 os.environ["SMTP_HOST"] = ""  # never send real email from tests
 
 from app import mailer, scraper  # noqa: E402
 from app.db import Base, SessionLocal, Subscriber, engine, utcnow  # noqa: E402
-from app.main import create_watch_limiter  # noqa: E402
+from app.main import (create_watch_limiter, search_limiter, sections_cache,  # noqa: E402
+                      terms_cache)
 from app.scraper import parse_sections  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -22,7 +24,10 @@ COMP211_HTML = (FIXTURES / "comp211_spring2027.html").read_text()
 def clean_state(monkeypatch):
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
-    create_watch_limiter.reset()
+    for thing in (create_watch_limiter, search_limiter):
+        thing.reset()
+    for cache in (sections_cache, terms_cache):
+        cache.clear()
     # By default, "UNC" returns the saved COMP 211 page (001 full, 002 has 40 seats).
     monkeypatch.setattr(scraper, "fetch_sections", lambda *_: parse_sections(COMP211_HTML))
     yield
