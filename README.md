@@ -1,6 +1,6 @@
 # UNC Seat Alert
 
-[![CI](https://github.com/Tdevu/seat-alert/actions/workflows/ci.yml/badge.svg)](https://github.com/Tdevu/seat-alert/actions/workflows/ci.yml)
+[![CI](https://github.com/Tanuj-D/seat-alert/actions/workflows/ci.yml/badge.svg)](https://github.com/Tanuj-D/seat-alert/actions/workflows/ci.yml)
 
 Get an email the moment a seat opens in a full UNC Chapel Hill class.
 
