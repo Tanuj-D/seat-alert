@@ -13,7 +13,7 @@ os.environ["SMTP_HOST"] = ""  # never send real email from tests
 from app import mailer, scraper  # noqa: E402
 from app.db import Base, SessionLocal, Subscriber, engine, utcnow  # noqa: E402
 from app.main import (create_watch_limiter, search_limiter, sections_cache,  # noqa: E402
-                      terms_cache)
+                      options_cache)
 from app.scraper import parse_sections  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -26,7 +26,7 @@ def clean_state(monkeypatch):
     Base.metadata.create_all(engine)
     for thing in (create_watch_limiter, search_limiter):
         thing.reset()
-    for cache in (sections_cache, terms_cache):
+    for cache in (sections_cache, options_cache):
         cache.clear()
     # By default, "UNC" returns the saved COMP 211 page (001 full, 002 has 40 seats).
     monkeypatch.setattr(scraper, "fetch_sections", lambda *_: parse_sections(COMP211_HTML))

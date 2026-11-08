@@ -75,7 +75,12 @@ class Watch(Base):
     subject: Mapped[str] = mapped_column(String(8))
     catalog_number: Mapped[str] = mapped_column(String(8))
     section: Mapped[str] = mapped_column(String(8))
+    # Copied from UNC so the manage page can show them without a lookup.
+    title: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    schedule: Mapped[str | None] = mapped_column(String(128), nullable=True)
     last_seats: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -84,6 +89,13 @@ class Watch(Base):
     @property
     def course(self) -> str:
         return f"{self.subject} {self.catalog_number}-{self.section}"
+
+    def update_from(self, section) -> None:
+        """Refresh the copied details from a fresh scraper.Section."""
+        self.title = section.title[:128] or None
+        self.schedule = section.schedule[:128] or None
+        self.last_seats = section.available_seats
+        self.last_checked_at = utcnow()
 
 
 ROOT = Path(__file__).resolve().parent.parent

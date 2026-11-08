@@ -99,3 +99,12 @@ def test_default_notifier_sends_email(session, verified_subscriber, outbox):
     assert email.subject == "Seat open: COMP 211-001"
     assert "2 seats are open" in email.body
     assert f"/api/unsubscribe/{w.id}?token={verified_subscriber.token}" in email.body
+
+
+def test_checker_refreshes_details_and_check_time(session, verified_subscriber):
+    w = add_watch(session, verified_subscriber)
+    assert w.last_checked_at is None
+    check_watches(session, fetch=lambda *_: [make_section(0)], notify=lambda *_: None)
+    session.refresh(w)
+    assert w.title == "System Programming"
+    assert w.last_checked_at is not None

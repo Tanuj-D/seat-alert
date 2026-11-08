@@ -149,3 +149,12 @@ def test_unsubscribe_link(signed_up):
     # Clicking it twice is harmless.
     again = client.get(f"/api/unsubscribe/{watch_id}", params={"token": token})
     assert again.status_code == 200
+
+
+def test_watch_stores_class_details(outbox):
+    client.post("/api/watches", json=WATCH)
+    watches = client.get("/api/watches", params={"token": token_from(outbox)}).json()
+    w = watches[0]
+    assert w["title"] == "System Programming Fundamental"
+    assert w["schedule"] == "MWF 11:15 AM-12:05 PM"
+    assert w["last_checked_at"] is not None
