@@ -23,3 +23,11 @@ def test_parses_term_list(comp211_html):
     from app.scraper import parse_terms
     assert parse_terms(comp211_html) == ["2026 Fall", "2027 Spring"]
     assert parse_terms("<html></html>") == []
+
+
+def test_parses_subject_list_sorted_and_unique(comp211_html):
+    from app.scraper import parse_subjects
+    subjects = parse_subjects(comp211_html)
+    assert subjects == sorted(set(subjects))
+    assert "COMP" in subjects and "MATH" in subjects
+    assert len(subjects) > 100

@@ -68,7 +68,7 @@ def check_watches(session: Session, fetch: Fetcher = fetch_sections,
                     continue
                 w.notified_at = utcnow()
                 sent += 1
-            w.last_seats = sec.available_seats
+            w.update_from(sec)
     session.commit()
     return sent
 

@@ -60,21 +60,34 @@ def parse_sections(html: str) -> list[Section]:
     return sections
 
 
-def parse_terms(html: str) -> list[str]:
-    """Terms currently offered, e.g. ["2026 Fall", "2027 Spring"]."""
-    soup = BeautifulSoup(html, "html.parser")
-    tag = soup.find("script", id="json_terms")
+def _json_list(html: str, script_id: str) -> list[str]:
+    """Read a JSON list of strings the search page embeds in a <script> tag."""
+    tag = BeautifulSoup(html, "html.parser").find("script", id=script_id)
     if tag is None or not tag.string:
         return []
-    terms = json.loads(tag.string)
-    return [t for t in terms if isinstance(t, str)]
+    try:
+        values = json.loads(tag.string)
+    except json.JSONDecodeError:
+        return []
+    return [v for v in values if isinstance(v, str)]
 
 
-def fetch_terms() -> list[str]:
+def parse_terms(html: str) -> list[str]:
+    """Terms currently offered, e.g. ["2026 Fall", "2027 Spring"]."""
+    return _json_list(html, "json_terms")
+
+
+def parse_subjects(html: str) -> list[str]:
+    """All subject codes, sorted, e.g. ["AAAD", ..., "COMP", ...]."""
+    return sorted(set(_json_list(html, "json_subjects")))
+
+
+def fetch_search_options() -> dict[str, list[str]]:
+    """Terms and subjects for the search form, from a single request."""
     with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=15) as client:
         resp = client.get(SEARCH_URL, follow_redirects=True)
         resp.raise_for_status()
-        return parse_terms(resp.text)
+        return {"terms": parse_terms(resp.text), "subjects": parse_subjects(resp.text)}
 
 
 def fetch_sections(term: str, subject: str, catalog_number: str,

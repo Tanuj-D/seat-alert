@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
-from datetime import timedelta
+from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
 
@@ -26,7 +26,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 create_watch_limiter = RateLimiter(config.CREATE_WATCH_LIMIT_PER_MINUTE, 60)
 search_limiter = RateLimiter(config.SEARCH_LIMIT_PER_MINUTE, 60)
 sections_cache = TTLCache(ttl_seconds=60)
-terms_cache = TTLCache(ttl_seconds=3600)
+options_cache = TTLCache(ttl_seconds=3600)
 
 
 async def checker_loop() -> None:
@@ -96,7 +96,15 @@ class WatchOut(BaseModel):
     subject: str
     catalog_number: str
     section: str
+    title: str | None
+    schedule: str | None
     last_seats: int | None
+    last_checked_at: datetime | None
+
+
+class SearchOptionsOut(BaseModel):
+    terms: list[str]
+    subjects: list[str]
 
 
 class CreateWatchOut(BaseModel):
@@ -144,8 +152,12 @@ def html_page(title: str, message: str, status: int = 200,
         "<!doctype html><html lang=en><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"
         f"<title>{escape(title)} · UNC Seat Alert</title>"
+        "<link rel=icon href='/static/icon.svg' type='image/svg+xml'>"
         "<link rel=stylesheet href='/static/app.css'>"
-        "<main class='page narrow'><div class=card>"
+        "<main class='page narrow'>"
+        "<a class=brand href='/' style='margin-bottom:20px'>"
+        "<img src='/static/icon.svg' alt=''><span>UNC Seat Alert</span></a>"
+        "<div class=card>"
         f"<h1>{escape(title)}</h1><p>{escape(message)}</p>"
         f"<a class='btn' href='{escape(href)}'>{escape(label)}</a>"
         "</div></main></html>"
@@ -172,11 +184,11 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/api/terms", response_model=list[str],
-         dependencies=[Depends(search_limiter.dependency)])
-def get_terms():
+@app.get("/api/options", response_model=SearchOptionsOut)
+def get_search_options():
+    """Terms and subject codes for the search form. Cached, so no rate limit."""
     try:
-        return terms_cache.get_or_set("terms", scraper.fetch_terms)
+        return options_cache.get_or_set("options", scraper.fetch_search_options)
     except httpx.HTTPError:
         raise HTTPException(502, "UNC class search is unavailable right now")
 
@@ -212,8 +224,8 @@ def create_watch(body: WatchIn, session: Session = Depends(get_session)):
     # Save the term UNC reports (e.g. "2027 Spring"), not what the user typed:
     # UNC ignores terms it doesn't recognize, so "Spring" would still match.
     watch = Watch(subscriber_id=sub.id, term=match.term, subject=body.subject,
-                  catalog_number=body.catalog_number, section=body.section,
-                  last_seats=match.available_seats)
+                  catalog_number=body.catalog_number, section=body.section)
+    watch.update_from(match)
     session.add(watch)
     try:
         session.commit()

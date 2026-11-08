@@ -20,11 +20,12 @@ def test_static_css():
     assert client.get("/static/app.css").status_code == 200
 
 
-def test_terms_endpoint_is_cached(monkeypatch):
+def test_options_endpoint_is_cached(monkeypatch):
     calls = []
-    monkeypatch.setattr(scraper, "fetch_terms", lambda: calls.append(1) or ["2027 Spring"])
-    assert client.get("/api/terms").json() == ["2027 Spring"]
-    client.get("/api/terms")
+    opts = {"terms": ["2027 Spring"], "subjects": ["COMP", "MATH"]}
+    monkeypatch.setattr(scraper, "fetch_search_options", lambda: calls.append(1) or opts)
+    assert client.get("/api/options").json() == opts
+    client.get("/api/options")
     assert len(calls) == 1
 
 

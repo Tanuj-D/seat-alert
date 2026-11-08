@@ -5,51 +5,59 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>UNC Seat Alert</title>
   <meta name="description" content="Get an email the moment a seat opens in a full UNC class.">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <main class="page">
-  <header>
-    <h1>UNC Seat Alert</h1>
-    <p>Class full? Get an email the moment a seat opens.</p>
-  </header>
+  <a class="brand" href="/"><img src="/static/icon.svg" alt=""><span>UNC Seat Alert</span></a>
 
-  <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+  <section class="hero">
+    <h1>Class full? Get an email the second a seat opens.</h1>
+    <p>Watch any full section and we'll check it every couple of minutes, so you can grab the seat before someone else does.</p>
+  </section>
 
-  <form id="search" class="card">
-    <h2>1. Find your class</h2>
-    <div class="row">
+  <form id="search" class="card" autocomplete="off">
+    <div class="search-row">
+      <div class="course">
+        <label for="course">Course</label>
+        <input id="course" class="big" placeholder="e.g. COMP 211" list="subjects" required
+               maxlength="16" autocapitalize="characters" spellcheck="false">
+        <datalist id="subjects"></datalist>
+      </div>
       <div>
         <label for="term">Term</label>
-        <select id="term" required><option>Loading…</option></select>
+        <select id="term"><option>Loading…</option></select>
       </div>
-      <div>
-        <label for="subject">Subject</label>
-        <input id="subject" placeholder="COMP" required maxlength="8" autocapitalize="characters">
-      </div>
-      <div>
-        <label for="number">Number</label>
-        <input id="number" placeholder="211" required maxlength="8">
-      </div>
-      <button class="btn" type="submit">Search</button>
+      <button class="btn" type="submit" id="search-btn">Search</button>
+    </div>
+    <div class="examples">
+      <span class="muted">Try:</span>
+      <button type="button" class="chip">COMP 211</button>
+      <button type="button" class="chip">MATH 231</button>
+      <button type="button" class="chip">ECON 101</button>
+      <button type="button" class="chip">CHEM 101</button>
     </div>
   </form>
 
-  <section id="results" class="card hidden">
-    <h2 id="results-title">2. Pick a section</h2>
-    <div style="margin-bottom:12px">
-      <label for="email">Your email</label>
+  <section id="results" class="card hidden" aria-live="polite">
+    <div class="card-head">
+      <h2 id="results-title">Sections</h2>
+      <span id="results-term" class="muted"></span>
+    </div>
+    <div id="confirm" class="confirm hidden"></div>
+    <div class="email-row">
+      <label for="email">Email for alerts</label>
       <input id="email" type="email" placeholder="onyen@unc.edu" autocomplete="email">
     </div>
     <ul id="sections" class="sections"></ul>
   </section>
 
   <section class="card">
-    <h2>How it works</h2>
     <ol class="steps">
-      <li>Search for a class and click <strong>Watch</strong> on a full section.</li>
-      <li>Confirm your email with the link we send you.</li>
-      <li>We check every couple of minutes and email you as soon as a seat opens.</li>
+      <li><span class="num">1</span><b>Pick a full section</b>Search your class and tap Watch.</li>
+      <li><span class="num">2</span><b>Confirm your email</b>One click on the link we send you.</li>
+      <li><span class="num">3</span><b>Get the alert</b>We email you the moment a seat opens.</li>
     </ol>
   </section>
 
@@ -60,139 +68,188 @@
   </footer>
 </main>
 
+<div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+
+<script src="/static/common.js"></script>
 <script>
-const $ = (id) => document.getElementById(id);
-let lastSearch = null;
+let subjects = new Set();
+let lastQuery = "";
+const watched = new Set();  // sections watched during this visit
 
-function notify(text, ok = true) {
-  const n = $("notice");
-  n.textContent = text;
-  n.className = "notice " + (ok ? "ok" : "err");
-  clearTimeout(notify.timer);
-  notify.timer = setTimeout(() => n.classList.add("hidden"), ok ? 8000 : 6000);
+// "COMP 211", "comp211", "COMP-211H" -> { subject: "COMP", number: "211" }
+function parseCourse(text) {
+  const m = text.trim().toUpperCase().match(/^([A-Z]{2,5})\s*-?\s*(\d{1,4}[A-Z]{0,2})$/);
+  return m && { subject: m[1], number: m[2] };
 }
 
-async function api(path, options) {
-  const resp = await fetch(path, options);
-  const data = resp.status === 204 ? null : await resp.json().catch(() => null);
-  if (!resp.ok) {
-    let msg = data && data.detail;
-    if (Array.isArray(msg)) msg = "Please check your email address.";
-    throw new Error(msg || "Something went wrong. Try again in a minute.");
-  }
-  return data;
-}
-
-async function loadTerms() {
-  const select = $("term");
+async function loadOptions() {
   try {
-    const terms = await api("/api/terms");
-    select.replaceChildren(...terms.map((t) => new Option(t, t)));
+    const opts = await api("/api/options");
+    subjects = new Set(opts.subjects);
+    $("subjects").replaceChildren(...opts.subjects.map((s) => new Option(s)));
+    $("term").replaceChildren(...opts.terms.map((t) => new Option(t, t)));
     // Default to the latest term, which is usually the one being registered for.
-    if (terms.length) select.value = terms[terms.length - 1];
+    const wanted = new URLSearchParams(location.search).get("term");
+    $("term").value = opts.terms.includes(wanted) ? wanted : opts.terms.at(-1) || "";
   } catch (e) {
-    select.replaceChildren(new Option("Couldn't load terms", ""));
+    $("term").replaceChildren(new Option("Unavailable", ""));
     notify(e.message, false);
   }
 }
 
-function renderSections(sections) {
-  const list = $("sections");
-  list.replaceChildren();
-  if (!sections.length) {
-    const li = document.createElement("li");
-    li.className = "muted";
-    li.textContent = "No sections found. Check the subject and number.";
-    list.append(li);
-    return;
-  }
-  const first = sections[0];
-  $("results-title").textContent =
-    `2. Pick a section of ${first.subject} ${first.catalog_number}: ${first.title}`;
-
-  for (const s of sections) {
-    const li = document.createElement("li");
-    li.className = "section";
-
-    const info = document.createElement("div");
-    info.className = "info";
-    const name = document.createElement("div");
-    name.className = "name";
-    name.textContent = `Section ${s.section}`;
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = [s.schedule, s.instruction_mode].filter(Boolean).join(" · ");
-    info.append(name, meta);
-
-    const badge = document.createElement("span");
-    const open = s.available_seats > 0;
-    badge.className = "badge " + (open ? "open" : "full");
-    badge.textContent = open ? `${s.available_seats} open` : "Full";
-
-    const btn = document.createElement("button");
-    btn.className = "btn small" + (open ? " secondary" : "");
-    btn.textContent = "Watch";
-    btn.title = open ? "This section has seats now. We'll alert you if it fills and reopens."
-                     : "Get an email when a seat opens";
-    btn.addEventListener("click", () => watch(s, btn));
-
-    li.append(info, badge, btn);
-    list.append(li);
-  }
+function showLoading() {
+  $("results").classList.remove("hidden");
+  $("results-title").textContent = "Looking up sections…";
+  $("results-term").textContent = "";
+  const rows = [1, 2, 3].map(() => {
+    const li = el("li", "section");
+    const info = el("div", "info");
+    const a = el("div", "skeleton"); a.style.width = "40%";
+    const b = el("div", "skeleton"); b.style.cssText = "width:65%;margin-top:8px";
+    info.append(a, b);
+    li.append(info);
+    return li;
+  });
+  $("sections").replaceChildren(...rows);
 }
 
-async function watch(section, btn) {
-  const email = $("email").value.trim();
-  if (!email || !$("email").checkValidity()) {
-    $("email").focus();
+function renderSections(course, term, sections) {
+  const list = $("sections");
+  $("results-term").textContent = term;
+  if (!sections.length) {
+    $("results-title").textContent = `${course.subject} ${course.number}`;
+    list.replaceChildren(el("li", "empty",
+      `No sections of ${course.subject} ${course.number} in ${term}. Check the course number or try another term.`));
+    return;
+  }
+  $("results-title").textContent =
+    `${sections[0].subject} ${sections[0].catalog_number} · ${sections[0].title}`;
+
+  // Full sections first: those are the ones people want to watch.
+  sections = [...sections].sort((a, b) =>
+    (a.available_seats > 0) - (b.available_seats > 0) || a.section.localeCompare(b.section));
+
+  list.replaceChildren(...sections.map((s) => {
+    const li = el("li", "section");
+    const info = el("div", "info");
+    info.append(el("div", "name", `Section ${s.section}`),
+                el("div", "meta", [s.schedule, s.instruction_mode].filter(Boolean).join(" · ")));
+
+    const key = `${s.term}|${s.subject}|${s.catalog_number}|${s.section}`;
+    const btn = el("button", "btn small", "Watch");
+    if (s.available_seats > 0) {
+      btn.classList.add("secondary");
+      btn.title = "Has seats now. We'll alert you if it fills up and then reopens.";
+    }
+    if (watched.has(key)) markWatched(btn);
+    btn.addEventListener("click", () => watch(s, key, btn));
+
+    li.append(info, seatBadge(s.available_seats), btn);
+    return li;
+  }));
+}
+
+function markWatched(btn) {
+  btn.textContent = "Watching ✓";
+  btn.className = "btn small done";
+  btn.disabled = true;
+}
+
+function showConfirm(email, verified, label) {
+  const box = $("confirm");
+  const text = el("div");
+  if (verified) {
+    text.append(el("strong", null, `You're watching ${label}`),
+                el("p", null, `We'll email ${email} the moment a seat opens.`));
+  } else {
+    text.append(el("strong", null, "Check your inbox"),
+                el("p", null, `We sent a confirmation link to ${email}. Click it to start getting alerts for ${label}.`));
+  }
+  box.replaceChildren(el("span", "icon", verified ? "✅" : "📬"), text);
+  box.classList.remove("hidden");
+}
+
+async function watch(s, key, btn) {
+  const input = $("email");
+  const email = input.value.trim();
+  if (!email || !input.checkValidity()) {
+    input.focus();
     notify("Enter your email first so we know where to send the alert.", false);
     return;
   }
   btn.disabled = true;
+  btn.textContent = "Saving…";
+  const label = `${s.subject} ${s.catalog_number}-${s.section}`;
   try {
     const res = await api("/api/watches", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email,
-        term: section.term,
-        subject: section.subject,
-        catalog_number: section.catalog_number,
-        section: section.section,
-      }),
+      body: JSON.stringify({ email, term: s.term, subject: s.subject,
+                             catalog_number: s.catalog_number, section: s.section }),
     });
-    btn.textContent = "Watching ✓";
-    notify(`Watching ${section.subject} ${section.catalog_number}-${section.section}. ${res.message}`);
+    store.set("email", email);
+    watched.add(key);
+    markWatched(btn);
+    showConfirm(email, res.verified, label);
   } catch (e) {
-    btn.disabled = false;
+    if (/already watching/i.test(e.message)) {
+      watched.add(key);
+      markWatched(btn);
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Watch";
+    }
     notify(e.message, false);
   }
 }
 
-$("search").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const params = new URLSearchParams({
-    term: $("term").value,
-    subject: $("subject").value.trim().toUpperCase(),
-    catalog_number: $("number").value.trim(),
-  });
-  if (params.toString() === lastSearch) return;
-  const btn = event.submitter;
-  btn.disabled = true;
-  $("notice").className = "notice hidden";
+async function search() {
+  $("notice").classList.add("hidden");  // clear any old message
+  const course = parseCourse($("course").value);
+  if (!course) {
+    notify("Type a course like COMP 211.", false);
+    $("course").focus();
+    return;
+  }
+  if (subjects.size && !subjects.has(course.subject)) {
+    notify(`"${course.subject}" isn't a UNC subject code. Pick one from the suggestions.`, false);
+    return;
+  }
+  const term = $("term").value;
+  const query = `${course.subject} ${course.number}|${term}`;
+  if (query === lastQuery) return;
+
+  // Keep the URL shareable, e.g. /?course=COMP+211&term=2027+Spring
+  history.replaceState(null, "", "?" + new URLSearchParams(
+    { course: `${course.subject} ${course.number}`, term }));
+  $("course").value = `${course.subject} ${course.number}`;
+  $("confirm").classList.add("hidden");
+  $("search-btn").disabled = true;
+  showLoading();
   try {
+    const params = new URLSearchParams({ term, subject: course.subject, catalog_number: course.number });
     const sections = await api("/api/sections?" + params);
-    lastSearch = params.toString();
-    $("results").classList.remove("hidden");
-    renderSections(sections);
+    lastQuery = query;
+    renderSections(course, term, sections);
   } catch (e) {
+    $("results").classList.add("hidden");
     notify(e.message, false);
   } finally {
-    btn.disabled = false;
+    $("search-btn").disabled = false;
   }
-});
+}
 
-loadTerms();
+$("search").addEventListener("submit", (e) => { e.preventDefault(); search(); });
+$("term").addEventListener("change", () => { if ($("course").value) search(); });
+for (const chip of document.querySelectorAll(".chip")) {
+  chip.addEventListener("click", () => { $("course").value = chip.textContent; search(); });
+}
+
+$("email").value = store.get("email");
+loadOptions().then(() => {
+  const course = new URLSearchParams(location.search).get("course");
+  if (course) { $("course").value = course; search(); }
+});
 </script>
 </body>
 </html>

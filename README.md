@@ -102,7 +102,7 @@ that the Docker image builds.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/terms` | Terms currently offered |
+| GET | `/api/options` | Terms and subject codes for the search form |
 | GET | `/api/sections?term=2027 Spring&subject=COMP&catalog_number=211` | Live seat counts for a course |
 | POST | `/api/watches` | Watch a section (`email`, `term`, `subject`, `catalog_number`, `section`) |
 | GET | `/api/verify?token=...` | Confirm email (link from the confirmation email) |
